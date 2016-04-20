@@ -67,7 +67,9 @@ func (cmd *Command) Runner(args []string) (ifrit.Runner, error) {
 func (cmd *Command) configureServer() (*ssh.ServerConfig, error) {
 	// certChecker := &ssh.CertChecker{}
 
-	config := &ssh.ServerConfig{}
+	config := &ssh.ServerConfig{
+		NoClientAuth: true, // TODO: remove this!!!
+	}
 
 	privateBytes, err := ioutil.ReadFile(string(cmd.ServerKeyPath))
 	if err != nil {
