@@ -18,9 +18,10 @@ import (
 )
 
 type tunnelServer struct {
-	config     *ssh.ServerConfig
-	logger     lager.Logger
-	tunnelHost string
+	config        *ssh.ServerConfig
+	logger        lager.Logger
+	tunnelHost    string
+	sessionTokens map[string]string
 }
 
 func (s *tunnelServer) Serve(listener net.Listener) {
@@ -55,6 +56,7 @@ type forwardedTCPIP struct {
 func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
 	defer conn.Close()
 
+	// TODO: enforce localhost/loopback forwarding (no external IPs/host)
 	go s.handleForwardRequests(conn, reqs)
 
 	logger.Info("about-to-do-channels", lager.Data{})
@@ -68,7 +70,7 @@ func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, cha
 		case "direct-tcpip":
 			s.handleDirectChannel(newChannel)
 		case "session":
-			s.handleSessionChannel(newChannel)
+			s.handleSessionChannel(newChannel, conn.SessionID())
 		default:
 			logger.Info("rejecting-channel", lager.Data{
 				"type": newChannel.ChannelType(),
@@ -135,43 +137,100 @@ func (s *tunnelServer) handleDirectChannel(newChannel ssh.NewChannel) {
 	}(channel)
 }
 
-func (s *tunnelServer) handleSessionChannel(newChannel ssh.NewChannel) {
+func (s *tunnelServer) handleSessionChannel(newChannel ssh.NewChannel, sessionID []byte) {
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
 		s.logger.Error("failed-to-accept-channel", err)
 		return
 	}
-	fmt.Fprintf(channel, "your fancy new port is...")
+	// fmt.Fprintf(channel, "your fancy new port is...")
+	// defer channel.Close()
+
+	// go func(in <-chan *ssh.Request) {
+	// 	for req := range in {
+	// 		ok := false
+	//
+	// 		switch req.Type {
+	// 		case "shell":
+	// 			ok = (len(req.Payload) == 0)
+	// 		}
+	//
+	// 		req.Reply(ok, nil)
+	// 	}
+	// }(requests)
+	//
+	// // term := terminal.NewTerminal(channel, "> ")
+	// // pipe(channel, "hello")
+	// fmt.Println(channel, "hello")
+	//
+	// go func() {
+	// 	defer channel.Close()
+	// 	// for {
+	// 	// 	line, err := term.ReadLine()
+	// 	// 	if err != nil {
+	// 	// 		s.logger.Error("readline-error", err)
+	// 	// 		break
+	// 	// 	}
+	// 	// 	fmt.Printf("you executed, '%s'", line)
+	// 	// }
+	// }()
 
 	defer channel.Close()
 
 	for req := range requests {
-		// 	switch req.Type {
-		// 	case "exec":
-		// 		var request execRequest
-		// 		_ = ssh.Unmarshal(req.Payload, &request)
-		// 		s.logger.Info("exec", lager.Data{
-		// 			"request": request,
-		// 		})
-		// 	case "shell":
-		// 		var request shellRequest
-		// 		_ = ssh.Unmarshal(req.Payload, &request)
-		// 		s.logger.Info("shell", lager.Data{
-		// 			"request": request,
-		// 		})
-		// 	default:
-		// 		s.logger.Info("rejecting-request", lager.Data{
-		// 			"type": req.Type,
-		// 		})
-		// 		req.Reply(false, nil)
-		// 		continue
-		// 	}
+		switch req.Type {
+		// case "pty-req":
+		// 	req.Reply(true, nil)
+		case "shell":
+			// a) if "server", print details
+			// b) allow "exit" command only
+			ok := (len(req.Payload) == 0)
 
-		// err = conn.Wait()
-		// logger.Error("connection-closed", err)
+			token, found := s.sessionTokens[string(sessionID)]
 
-		req.Reply(false, []byte("must run with -N"))
+			if !found {
+				s.logger.Info("Could not find token for session")
+				req.Reply(false, nil)
+				continue
+			}
+
+			fmt.Fprintf(channel, "Here is your token: %s\n\r", token)
+			req.Reply(ok, nil)
+		default:
+			s.logger.Info("rejecting-request", lager.Data{
+				"type": req.Type,
+			})
+			req.Reply(false, nil)
+			continue
+		}
 	}
+
+	// for req := range requests {
+	// 	switch req.Type {
+	// 	case "exec":
+	// 		var request execRequest
+	// 		_ = ssh.Unmarshal(req.Payload, &request)
+	// 		s.logger.Info("exec", lager.Data{
+	// 			"request": request,
+	// 		})
+	// 	case "shell":
+	// 		var request shellRequest
+	// 		_ = ssh.Unmarshal(req.Payload, &request)
+	// 		s.logger.Info("shell", lager.Data{
+	// 			"request": request,
+	// 		})
+	// 	default:
+	// 		s.logger.Info("rejecting-request", lager.Data{
+	// 			"type": req.Type,
+	// 		})
+	// 		continue
+	// 	}
+	//
+	// 	// err = conn.Wait()
+	// 	// logger.Error("connection-closed", err)
+	//
+	// 	req.Reply(false, nil)
+	// }
 }
 
 func (s *tunnelServer) handleForwardRequests(
@@ -182,17 +241,6 @@ func (s *tunnelServer) handleForwardRequests(
 
 	for r := range reqs {
 		switch r.Type {
-		case "direct-tcpip":
-			logger := s.logger.Session("direct-tcpip")
-
-			var req directForwardRequest
-			err := ssh.Unmarshal(r.Payload, &req)
-			if err != nil {
-				logger.Error("malformed-direct-request", err)
-				r.Reply(false, nil)
-				continue
-			}
-
 		case "tcpip-forward":
 			logger := s.logger.Session("tcpip-forward")
 
@@ -212,7 +260,7 @@ func (s *tunnelServer) handleForwardRequests(
 				continue
 			}
 
-			logger.Info("forward-details", lager.Data{
+			logger.Info("forward-details-request", lager.Data{
 				"BindIP":   req.BindIP,
 				"BindPort": req.BindPort,
 			})
@@ -249,6 +297,10 @@ func (s *tunnelServer) handleForwardRequests(
 				continue
 			}
 
+			logger.Info("forward-details-response", lager.Data{
+				"Response": res,
+			})
+
 			forPort := req.BindPort
 			if forPort == 0 {
 				forPort = res.BoundPort
@@ -263,7 +315,6 @@ func (s *tunnelServer) handleForwardRequests(
 			// }
 
 			r.Reply(true, ssh.Marshal(res))
-
 		default:
 			if strings.Contains(r.Type, "keepalive") {
 				s.logger.Info("keepalive", lager.Data{"type": r.Type})

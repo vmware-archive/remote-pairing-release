@@ -47,42 +47,86 @@ func (cmd *Command) Runner(args []string) (ifrit.Runner, error) {
 	// 	return nil, fmt.Errorf("Failed to load session signing key: %s", err)
 	// }
 
-	// config, err : cmd.configureServer(authorizedKeys)
-	config, err := cmd.configureServer()
+	// sessionId -> authorizedToken
+	sessionTokens := make(map[string]string)
+
+	config, err := cmd.configureServer(sessionTokens)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to configure SSH server: %s", err)
 	}
 
 	address := fmt.Sprintf("%s:%d", cmd.BindIP, cmd.BindPort)
-	// generator := NewTokenGenerator(sessionKey)
 
 	server := &tunnelServer{
-		logger:     cmd.logger,
-		config:     config,
-		tunnelHost: cmd.PeerIP,
+		logger:        cmd.logger,
+		config:        config,
+		tunnelHost:    cmd.PeerIP,
+		sessionTokens: sessionTokens,
 	}
 
 	return tunnelRunner{cmd.logger, server, address}, nil
 }
 
 // func (cmd *Command) configureServer(authorizedKeys []ssh.PublicKey)
-func (cmd *Command) configureServer() (*ssh.ServerConfig, error) {
+func (cmd *Command) configureServer(sessionTokens map[string]string) (*ssh.ServerConfig, error) {
 	// certChecker := &ssh.CertChecker{}
 
 	config := &ssh.ServerConfig{
-		// given user == "remote" && password == a token that matches config for token+port
-		PasswordCallback: func(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			if conn.User() == "test" && string(pass) == "test" {
-				cmd.logger.Info(fmt.Sprintf("User logged in: %s", conn.User()))
+		// PasswordCallback: func(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+		// 	user := conn.User()
+		//
+		// 	if user == "remote" {
+		// 		token := string(pass)
+		// 		matched := false
+		//
+		// 		for _, authorizedToken := range sessionTokens {
+		// 			cmd.logger.Info(fmt.Sprintf("Checking token: %s", authorizedToken))
+		// 			if authorizedToken == token {
+		// 				matched = true
+		// 				break
+		// 			}
+		// 		}
+		//
+		// 		if matched {
+		// 			cmd.logger.Info(fmt.Sprintf("User logged in: %s", user))
+		// 			return nil, nil
+		// 		}
+		// 	}
+		//
+		// 	return nil, fmt.Errorf("session rejected for %s", user)
+		// },
+
+		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			user := conn.User()
+			if user == "server" {
+				// TODO: check actual AuthorizedKeys
+				token, err := GenerateToken()
+				if err != nil {
+					return nil, err
+				}
+
+				cmd.logger.Info(fmt.Sprintf("Added token: %s", token))
+				sessionTokens[string(conn.SessionID())] = token
 				return nil, nil
 			}
-			return nil, fmt.Errorf("password rejected for %s", conn.User())
-		},
-		// given user == "server" && server authorizedKeys includes public key for this connection
-		// accept the connection and respond with port and token
-		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-			cmd.logger.Info(fmt.Sprintf("Public Key conn: %#v", conn))
-			return nil, errors.New("BAD PUBLIC KEY")
+
+			token := user
+			matched := false
+
+			for _, authorizedToken := range sessionTokens {
+				cmd.logger.Info(fmt.Sprintf("Checking token: %s", authorizedToken))
+				if authorizedToken == token {
+					matched = true
+					break
+				}
+			}
+
+			if matched {
+				cmd.logger.Info(fmt.Sprintf("User logged in: %s", user))
+				return nil, nil
+			}
+
+			return nil, errors.New("Bad Key or Token")
 		},
 	}
 
