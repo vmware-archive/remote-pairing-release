@@ -11,10 +11,12 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pivotal-golang/lager"
 	"github.com/tedsuo/ifrit"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 type tunnelServer struct {
@@ -143,94 +145,47 @@ func (s *tunnelServer) handleSessionChannel(newChannel ssh.NewChannel, sessionID
 		s.logger.Error("failed-to-accept-channel", err)
 		return
 	}
-	// fmt.Fprintf(channel, "your fancy new port is...")
-	// defer channel.Close()
 
-	// go func(in <-chan *ssh.Request) {
-	// 	for req := range in {
-	// 		ok := false
-	//
-	// 		switch req.Type {
-	// 		case "shell":
-	// 			ok = (len(req.Payload) == 0)
-	// 		}
-	//
-	// 		req.Reply(ok, nil)
-	// 	}
-	// }(requests)
-	//
-	// // term := terminal.NewTerminal(channel, "> ")
-	// // pipe(channel, "hello")
-	// fmt.Println(channel, "hello")
-	//
-	// go func() {
-	// 	defer channel.Close()
-	// 	// for {
-	// 	// 	line, err := term.ReadLine()
-	// 	// 	if err != nil {
-	// 	// 		s.logger.Error("readline-error", err)
-	// 	// 		break
-	// 	// 	}
-	// 	// 	fmt.Printf("you executed, '%s'", line)
-	// 	// }
-	// }()
+	// HandleSshRequests
+	go func() {
+		for req := range requests {
+			ok := true
+			switch req.Type {
+			case "exec":
+				ok = false
+			case "shell":
+				token, found := s.sessionTokens[string(sessionID)]
 
-	defer channel.Close()
-
-	for req := range requests {
-		switch req.Type {
-		// case "pty-req":
-		// 	req.Reply(true, nil)
-		case "shell":
-			// a) if "server", print details
-			// b) allow "exit" command only
-			ok := (len(req.Payload) == 0)
-
-			token, found := s.sessionTokens[string(sessionID)]
-
-			if !found {
-				s.logger.Info("Could not find token for session")
-				req.Reply(false, nil)
-				continue
+				channel.Write([]byte("SSH Tunnel Started\n\r"))
+				if found {
+					channel.Write([]byte(fmt.Sprintf("Token: %s\n\r", token)))
+				}
+				// sleepy hack to make "Allocated port..." message come after welcome, before prompt.
+				time.Sleep(20 * time.Millisecond)
+				channel.Write([]byte("\n\rType 'exit' to end the session.\n\r"))
 			}
 
-			fmt.Fprintf(channel, "Here is your token: %s\n\r", token)
 			req.Reply(ok, nil)
-		default:
-			s.logger.Info("rejecting-request", lager.Data{
-				"type": req.Type,
-			})
-			req.Reply(false, nil)
-			continue
 		}
-	}
+	}()
 
-	// for req := range requests {
-	// 	switch req.Type {
-	// 	case "exec":
-	// 		var request execRequest
-	// 		_ = ssh.Unmarshal(req.Payload, &request)
-	// 		s.logger.Info("exec", lager.Data{
-	// 			"request": request,
-	// 		})
-	// 	case "shell":
-	// 		var request shellRequest
-	// 		_ = ssh.Unmarshal(req.Payload, &request)
-	// 		s.logger.Info("shell", lager.Data{
-	// 			"request": request,
-	// 		})
-	// 	default:
-	// 		s.logger.Info("rejecting-request", lager.Data{
-	// 			"type": req.Type,
-	// 		})
-	// 		continue
-	// 	}
-	//
-	// 	// err = conn.Wait()
-	// 	// logger.Error("connection-closed", err)
-	//
-	// 	req.Reply(false, nil)
-	// }
+	// HandleTerminalReading
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		term := terminal.NewTerminal(channel, "> ")
+		defer channel.Close()
+
+		for {
+			line, err := term.ReadLine()
+			if err != nil {
+				break
+			}
+
+			if strings.Contains(string(line), "exit") {
+				channel.Close()
+			}
+		}
+	}()
 }
 
 func (s *tunnelServer) handleForwardRequests(
