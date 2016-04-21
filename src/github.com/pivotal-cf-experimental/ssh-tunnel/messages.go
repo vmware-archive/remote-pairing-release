@@ -26,6 +26,13 @@ type forwardTCPIPChannelRequest struct {
 	OriginPort  uint32
 }
 
+type directForwardRequest struct {
+	ForwardIP   string
+	ForwardPort uint32
+	// OriginIP    string
+	// OriginPort  uint32
+}
+
 // // Request types used in sessions - RFC 4254 6.X
 // const (
 // 	SessionRequest               = "session"       // RFC 4254 6.1

@@ -23,26 +23,26 @@ type tunnelServer struct {
 	tunnelHost string
 }
 
-func (server *tunnelServer) Serve(listener net.Listener) {
+func (s *tunnelServer) Serve(listener net.Listener) {
 	for {
 		c, err := listener.Accept()
 		if err != nil {
 			if !strings.Contains(err.Error(), "Use of closed network connection") {
-				server.logger.Error("failed-to-accept", err)
+				s.logger.Error("failed-to-accept", err)
 			}
 
 			return
 		}
 
-		logger := server.logger.Session("connection")
+		logger := s.logger.Session("connection")
 
-		conn, chans, reqs, err := ssh.NewServerConn(c, server.config)
+		conn, chans, reqs, err := ssh.NewServerConn(c, s.config)
 		if err != nil {
 			logger.Info("handshake-failed", lager.Data{"error": err.Error()})
 			continue
 		}
 
-		go server.handleConn(logger, conn, chans, reqs)
+		go s.handleConn(logger, conn, chans, reqs)
 	}
 }
 
@@ -52,305 +52,157 @@ type forwardedTCPIP struct {
 	boundPort uint32
 }
 
-func (server *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
+func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
 	defer conn.Close()
 
-	forwardedTCPIPs := make(chan forwardedTCPIP)
-	go server.handleForwardRequests(logger, conn, reqs, forwardedTCPIPs)
-
-	var processes []ifrit.Process
-	// var process ifrit.Process
-
-	// ensure processes get cleaned up
-	defer func() {
-		cleanupLog := logger.Session("cleanup")
-
-		for _, p := range processes {
-			cleanupLog.Debug("interrupting")
-
-			p.Signal(os.Interrupt)
-		}
-
-		for _, p := range processes {
-			err := <-p.Wait()
-			if err != nil {
-				cleanupLog.Error("process-exited-with-failure", err)
-			} else {
-				cleanupLog.Debug("process-exited-successfully")
-			}
-		}
-	}()
+	go s.handleForwardRequests(conn, reqs)
 
 	logger.Info("about-to-do-channels", lager.Data{})
 
 	for newChannel := range chans {
-		logger.Info("new-channel", lager.Data{
+		logger.Info("received-channel", lager.Data{
 			"type": newChannel.ChannelType(),
 		})
 
-		// logger.Info("rejecting-all-channel-types", lager.Data{
-		// 	"type": newChannel.ChannelType(),
-		// })
-		// newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
-
-		if newChannel.ChannelType() != "session" {
-			logger.Info("rejecting-unknown-channel-type", lager.Data{
+		switch newChannel.ChannelType() {
+		case "direct-tcpip":
+			s.handleDirectChannel(newChannel)
+		case "session":
+			s.handleSessionChannel(newChannel)
+		default:
+			logger.Info("rejecting-channel", lager.Data{
 				"type": newChannel.ChannelType(),
 			})
 
 			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
 			continue
 		}
-
-		logger.Info("accepting-new-session", lager.Data{
-			"extra": newChannel.ExtraData(),
-		})
-
-		channel, requests, err := newChannel.Accept()
-		if err != nil {
-			logger.Error("failed-to-accept-channel", err)
-			return
-		}
-		fmt.Fprintf(channel, "your fancy new port is...")
-
-		defer channel.Close()
-
-		for req := range requests {
-			// NOTE: none/interesting types:
-			// - env   ... ??? (on connect?)
-			// - exec  ... `ssh $HOST $COMMAND`
-			// - shell ... `ssh $HOST`
-
-			logger.Info("channel-request", lager.Data{
-				"type": req.Type,
-			})
-
-			// switch req.Type {
-			// case "env":
-			// 	var request envRequest
-			// 	_ = ssh.Unmarshal(req.Payload, &request)
-			// 	logger.Info("env", lager.Data{
-			// 		"request": request,
-			// 	})
-			// 	req.Reply(true, nil)
-			// // case "exec":
-			// // 	var request execRequest
-			// // 	_ = ssh.Unmarshal(req.Payload, &request)
-			// // 	logger.Info("exec", lager.Data{
-			// // 		"request": request,
-			// // 	})
-			// case "shell":
-			// 	var request shellRequest
-			// 	_ = ssh.Unmarshal(req.Payload, &request)
-			// 	logger.Info("shell", lager.Data{
-			// 		"request": request,
-			// 	})
-			// 	req.Reply(true, nil)
-			// default:
-			// 	logger.Info(req.Type, lager.Data{
-			// 		"message": "unknown",
-			// 	})
-			// 	req.Reply(false, nil)
-			// 	continue
-			// }
-			//
-			// err = conn.Wait()
-			// logger.Error("connection-closed", err)
-
-			if req.Type != "exec" {
-				logger.Info("rejecting")
-				req.Reply(false, nil)
-				continue
-			}
-
-			var request execRequest
-			err = ssh.Unmarshal(req.Payload, &request)
-			if err != nil {
-				logger.Error("malformed-exec-request", err)
-				req.Reply(false, nil)
-				return
-			}
-
-			// fmt.Fprintf(channel, "invalid command: %s", request.Command)
-			// req.Reply(false, nil)
-			// continue
-			err = conn.Wait()
-			logger.Error("connection-closed", err)
-
-			// workerRequest, err := parseRequest(request.Command)
-			// if err != nil {
-			// 	fmt.Fprintf(channel, "invalid command: %s", err)
-			// 	req.Reply(false, nil)
-			// 	continue
-			// }
-			//
-			// switch r := workerRequest.(type) {
-			// case registerWorkerRequest:
-			// 	logger := logger.Session("register-worker")
-			//
-			// 	req.Reply(true, nil)
-			//
-			// 	process, err = server.continuouslyRegisterWorkerDirectly(logger, channel)
-			// 	if err != nil {
-			// 		logger.Error("failed-to-register", err)
-			// 		return
-			// 	}
-			//
-			// 	processes = append(processes, process)
-			//
-			// 	err = conn.Wait()
-			// 	logger.Error("connection-closed", err)
-			//
-			// case forwardWorkerRequest:
-			// 	logger := logger.Session("forward-worker")
-			//
-			// 	req.Reply(true, nil)
-			//
-			// 	forwards := map[string]forwardedTCPIP{}
-			//
-			// 	for i := 0; i < r.expectedForwards(); i++ {
-			// 		select {
-			// 		case forwarded := <-forwardedTCPIPs:
-			// 			logger.Info("forwarded-tcpip", lager.Data{
-			// 				"bound-port": forwarded.boundPort,
-			// 			})
-			//
-			// 			processes = append(processes, forwarded.process)
-			//
-			// 			forwards[forwarded.bindAddr] = forwarded
-			//
-			// 		case <-time.After(10 * time.Second): // todo better?
-			// 			logger.Info("never-forwarded-tcpip")
-			// 		}
-			// 	}
-			//
-			// 	switch len(forwards) {
-			// 	case 0:
-			// 		fmt.Fprintf(channel, "requested forwarding but no forwards given\n")
-			// 		return
-			//
-			// 	case 1:
-			// 		for _, gardenForward := range forwards {
-			// 			process, err = server.continuouslyRegisterForwardedWorker(
-			// 				logger,
-			// 				channel,
-			// 				gardenForward.boundPort,
-			// 				0,
-			// 			)
-			// 			if err != nil {
-			// 				logger.Error("failed-to-register", err)
-			// 				return
-			// 			}
-			//
-			// 			processes = append(processes, process)
-			//
-			// 			break
-			// 		}
-			//
-			// 	case 2:
-			// 		gardenForward, found := forwards[r.gardenAddr]
-			// 		if !found {
-			// 			fmt.Fprintf(channel, "garden address %s not found in forwards\n", r.gardenAddr)
-			// 			return
-			// 		}
-			//
-			// 		baggageclaimForward, found := forwards[r.baggageclaimAddr]
-			// 		if !found {
-			// 			fmt.Fprintf(channel, "baggageclaim address %s not found in forwards\n", r.gardenAddr)
-			// 			return
-			// 		}
-			//
-			// 		process, err = server.continuouslyRegisterForwardedWorker(
-			// 			logger,
-			// 			channel,
-			// 			gardenForward.boundPort,
-			// 			baggageclaimForward.boundPort,
-			// 		)
-			// 		if err != nil {
-			// 			logger.Error("failed-to-register", err)
-			// 			return
-			// 		}
-			//
-			// 		processes = append(processes, process)
-			// 	}
-			//
-			// 	err = conn.Wait()
-			// 	logger.Error("connection-closed", err)
-			//
-			// default:
-			// 	logger.Info("invalid-command", lager.Data{
-			// 		"command": request.Command,
-			// 	})
-			//
-			// 	req.Reply(false, nil)
-			// }
-		}
 	}
 }
 
-// // TODO: settle on *one* of these registrations
-// func (server *tunnelServer) continuouslyRegisterWorkerDirectly(
-// 	logger lager.Logger,
-// 	channel ssh.Channel,
-// ) (ifrit.Process, error) {
-// 	logger.Session("start")
-// 	defer logger.Session("done")
-//
-// 	// var worker atc.Worker
-// 	// TODO: worker --> vnc host
-// 	err := json.NewDecoder(channel).Decode(&worker)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-//
-// 	channel.Write([]byte("testing"))
-// }
-//
-// func (server *tunnelServer) continuouslyRegisterForwardedWorker(
-// 	logger lager.Logger,
-// 	channel ssh.Channel,
-// 	gardenPort uint32,
-// 	baggageclaimPort uint32,
-// ) (ifrit.Process, error) {
-// 	logger.Session("start")
-// 	defer logger.Session("done")
-//
-// 	// var worker atc.Worker
-// 	// TODO: worker --> vnc host
-// 	err := json.NewDecoder(channel).Decode(&worker)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-//
-// 	worker.GardenAddr = fmt.Sprintf("%s:%d", server.forwardHost, gardenPort)
-//
-// 	if baggageclaimPort != 0 {
-// 		worker.BaggageclaimURL = fmt.Sprintf("http://%s:%d", server.forwardHost, baggageclaimPort)
-// 	}
-//
-// 	return server.heartbeatWorker(logger, worker, channel), nil
-// }
-//
-func (server *tunnelServer) handleForwardRequests(
-	logger lager.Logger,
+func (s *tunnelServer) handleDirectChannel(newChannel ssh.NewChannel) {
+	req := directForwardRequest{}
+	ssh.Unmarshal(newChannel.ExtraData(), &req)
+
+	channel, reqs, err := newChannel.Accept()
+	if err != nil {
+		s.logger.Error("failed-to-accept-channel", err)
+		return
+	}
+
+	go func() {
+		for r := range reqs {
+			s.logger.Info("ignoring-request", lager.Data{
+				"type": r.Type,
+			})
+
+			r.Reply(false, nil)
+		}
+	}()
+
+	go func(ch ssh.Channel) {
+		addr := fmt.Sprintf("%s:%d", req.ForwardIP, req.ForwardPort)
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			return
+		}
+		defer func() {
+			ch.Close()
+			conn.Close()
+		}()
+
+		wg := new(sync.WaitGroup)
+
+		pipe := func(to io.WriteCloser, from io.ReadCloser) {
+			// if either end breaks, close both ends to ensure they're both unblocked,
+			// otherwise io.Copy can block forever if e.g. reading after write end has
+			// gone away
+			defer to.Close()
+			defer from.Close()
+			defer wg.Done()
+
+			io.Copy(to, from)
+		}
+
+		wg.Add(1)
+		go pipe(ch, conn)
+
+		wg.Add(1)
+		go pipe(conn, ch)
+
+		wg.Wait()
+
+	}(channel)
+}
+
+func (s *tunnelServer) handleSessionChannel(newChannel ssh.NewChannel) {
+	channel, requests, err := newChannel.Accept()
+	if err != nil {
+		s.logger.Error("failed-to-accept-channel", err)
+		return
+	}
+	fmt.Fprintf(channel, "your fancy new port is...")
+
+	defer channel.Close()
+
+	for req := range requests {
+		// 	switch req.Type {
+		// 	case "exec":
+		// 		var request execRequest
+		// 		_ = ssh.Unmarshal(req.Payload, &request)
+		// 		s.logger.Info("exec", lager.Data{
+		// 			"request": request,
+		// 		})
+		// 	case "shell":
+		// 		var request shellRequest
+		// 		_ = ssh.Unmarshal(req.Payload, &request)
+		// 		s.logger.Info("shell", lager.Data{
+		// 			"request": request,
+		// 		})
+		// 	default:
+		// 		s.logger.Info("rejecting-request", lager.Data{
+		// 			"type": req.Type,
+		// 		})
+		// 		req.Reply(false, nil)
+		// 		continue
+		// 	}
+
+		// err = conn.Wait()
+		// logger.Error("connection-closed", err)
+
+		req.Reply(false, []byte("must run with -N"))
+	}
+}
+
+func (s *tunnelServer) handleForwardRequests(
 	conn *ssh.ServerConn,
 	reqs <-chan *ssh.Request,
-	forwardedTCPIPs chan<- forwardedTCPIP,
 ) {
-	var counter int
+	// var counter int
 
 	for r := range reqs {
 		switch r.Type {
-		case "tcpip-forward":
-			logger := logger.Session("tcpip-forward")
+		case "direct-tcpip":
+			logger := s.logger.Session("direct-tcpip")
 
-			counter++
-
-			if counter > 1 {
-				logger.Info("rejecting-extra-forward-request")
+			var req directForwardRequest
+			err := ssh.Unmarshal(r.Payload, &req)
+			if err != nil {
+				logger.Error("malformed-direct-request", err)
 				r.Reply(false, nil)
 				continue
 			}
+
+		case "tcpip-forward":
+			logger := s.logger.Session("tcpip-forward")
+
+			// counter++
+			//
+			// if counter > 1 {
+			// 	logger.Info("rejecting-extra-forward-request")
+			// 	r.Reply(false, nil)
+			// 	continue
+			// }
 
 			var req tcpipForwardRequest
 			err := ssh.Unmarshal(r.Payload, &req)
@@ -402,29 +254,29 @@ func (server *tunnelServer) handleForwardRequests(
 				forPort = res.BoundPort
 			}
 
-			process := server.forwardTCPIP(logger, conn, listener, req.BindIP, forPort)
+			_ = s.forwardTCPIP(logger, conn, listener, req.BindIP, forPort)
 
-			forwardedTCPIPs <- forwardedTCPIP{
-				bindAddr:  fmt.Sprintf("%s:%d", req.BindIP, req.BindPort),
-				boundPort: res.BoundPort,
-				process:   process,
-			}
+			// forwardedTCPIPs <- forwardedTCPIP{
+			// 	bindAddr:  fmt.Sprintf("%s:%d", req.BindIP, req.BindPort),
+			// 	boundPort: res.BoundPort,
+			// 	process:   process,
+			// }
 
 			r.Reply(true, ssh.Marshal(res))
 
 		default:
 			if strings.Contains(r.Type, "keepalive") {
-				logger.Info("keepalive", lager.Data{"type": r.Type})
+				s.logger.Info("keepalive", lager.Data{"type": r.Type})
 				r.Reply(true, nil)
 			} else {
-				logger.Info("ignoring-request", lager.Data{"type": r.Type})
+				s.logger.Info("ignoring-request", lager.Data{"type": r.Type})
 				r.Reply(false, nil)
 			}
 		}
 	}
 }
 
-func (server *tunnelServer) forwardTCPIP(
+func (s *tunnelServer) forwardTCPIP(
 	logger lager.Logger,
 	conn *ssh.ServerConn,
 	listener net.Listener,

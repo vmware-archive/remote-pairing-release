@@ -7,10 +7,6 @@ import (
 	"github.com/jessevdk/go-flags"
 )
 
-func init() {
-
-}
-
 func main() {
 	cmd := &Command{}
 
