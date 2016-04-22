@@ -16,8 +16,7 @@ type tcpipForwardRequest struct {
 }
 
 type tcpipForwardResponse struct {
-	BoundPort          uint32
-	AuthorizationToken string
+	BoundPort uint32
 }
 
 type forwardTCPIPChannelRequest struct {

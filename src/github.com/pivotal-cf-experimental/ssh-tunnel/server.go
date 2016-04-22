@@ -5,6 +5,7 @@ package main
 //   close after a period of inactivity.
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -58,10 +59,9 @@ type forwardedTCPIP struct {
 func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
 	defer conn.Close()
 
+	errorChan := make(chan string, 1)
 	// TODO: enforce localhost/loopback forwarding (no external IPs/host)
-	go s.handleForwardRequests(conn, reqs)
-
-	logger.Info("about-to-do-channels", lager.Data{})
+	go s.handleForwardRequests(conn, reqs, errorChan)
 
 	for newChannel := range chans {
 		logger.Info("received-channel", lager.Data{
@@ -72,7 +72,7 @@ func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, cha
 		case "direct-tcpip":
 			s.handleDirectChannel(newChannel)
 		case "session":
-			s.handleSessionChannel(newChannel, conn.SessionID())
+			s.handleSessionChannel(newChannel, conn.SessionID(), errorChan)
 		default:
 			logger.Info("rejecting-channel", lager.Data{
 				"type": newChannel.ChannelType(),
@@ -105,6 +105,7 @@ func (s *tunnelServer) handleDirectChannel(newChannel ssh.NewChannel) {
 	}()
 
 	go func(ch ssh.Channel) {
+		// TODO: reject if not localhost
 		addr := fmt.Sprintf("%s:%d", req.ForwardIP, req.ForwardPort)
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
@@ -139,14 +140,32 @@ func (s *tunnelServer) handleDirectChannel(newChannel ssh.NewChannel) {
 	}(channel)
 }
 
-func (s *tunnelServer) handleSessionChannel(newChannel ssh.NewChannel, sessionID []byte) {
+func (s *tunnelServer) handleSessionChannel(
+	newChannel ssh.NewChannel,
+	sessionID []byte,
+	errorChan chan string,
+) {
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
 		s.logger.Error("failed-to-accept-channel", err)
 		return
 	}
+	go func() {
+		for {
+			errorMsg := <-errorChan
+			channel.Write([]byte(errorMsg))
+			channel.Close()
+		}
+	}()
 
-	// HandleSshRequests
+	token, found := s.sessionTokens[string(sessionID)]
+
+	channel.Write([]byte("SSH Tunnel Started\n\r"))
+	if found {
+		channel.Write([]byte(fmt.Sprintf("Token: %s\n\r", token)))
+	}
+
+	// HandleSessionRequests
 	go func() {
 		for req := range requests {
 			ok := true
@@ -154,15 +173,7 @@ func (s *tunnelServer) handleSessionChannel(newChannel ssh.NewChannel, sessionID
 			case "exec":
 				ok = false
 			case "shell":
-				token, found := s.sessionTokens[string(sessionID)]
-
-				channel.Write([]byte("SSH Tunnel Started\n\r"))
-				if found {
-					channel.Write([]byte(fmt.Sprintf("Token: %s\n\r", token)))
-				}
-				// sleepy hack to make "Allocated port..." message come after welcome, before prompt.
-				time.Sleep(20 * time.Millisecond)
-				channel.Write([]byte("\n\rType 'exit' to end the session.\n\r"))
+				ok = true
 			}
 
 			req.Reply(ok, nil)
@@ -172,6 +183,7 @@ func (s *tunnelServer) handleSessionChannel(newChannel ssh.NewChannel, sessionID
 	// HandleTerminalReading
 	go func() {
 		time.Sleep(40 * time.Millisecond)
+		channel.Write([]byte("\n\rType 'exit' to end the session.\n\r"))
 		term := terminal.NewTerminal(channel, "> ")
 		defer channel.Close()
 
@@ -191,21 +203,13 @@ func (s *tunnelServer) handleSessionChannel(newChannel ssh.NewChannel, sessionID
 func (s *tunnelServer) handleForwardRequests(
 	conn *ssh.ServerConn,
 	reqs <-chan *ssh.Request,
+	errorChan chan string,
 ) {
-	// var counter int
 
 	for r := range reqs {
 		switch r.Type {
 		case "tcpip-forward":
 			logger := s.logger.Session("tcpip-forward")
-
-			// counter++
-			//
-			// if counter > 1 {
-			// 	logger.Info("rejecting-extra-forward-request")
-			// 	r.Reply(false, nil)
-			// 	continue
-			// }
 
 			var req tcpipForwardRequest
 			err := ssh.Unmarshal(r.Payload, &req)
@@ -215,12 +219,16 @@ func (s *tunnelServer) handleForwardRequests(
 				continue
 			}
 
-			logger.Info("forward-details-request", lager.Data{
-				"BindIP":   req.BindIP,
-				"BindPort": req.BindPort,
-			})
+			if req.BindIP != "localhost" && req.BindIP != "127.0.0.1" {
+				errorMsg := "Only localhost forwarding is allowed"
+				logger.Error("invalid-forward-address", errors.New(errorMsg))
+				errorChan <- errorMsg
+				r.Reply(false, nil)
+				return
+			}
 
-			// listener, err := net.Listen("tcp", "0.0.0.0:0")
+			logger.Info("forward-details-request", lager.Data{"request": req})
+
 			listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", req.BindIP, req.BindPort))
 			if err != nil {
 				logger.Error("failed-to-listen", err)
@@ -292,7 +300,7 @@ func (s *tunnelServer) forwardTCPIP(
 	return ifrit.Background(ifrit.RunFunc(func(signals <-chan os.Signal, ready chan<- struct{}) error {
 		go func() {
 			<-signals
-
+			logger.Info("closing-local-listener")
 			listener.Close()
 		}()
 
@@ -301,10 +309,10 @@ func (s *tunnelServer) forwardTCPIP(
 		for {
 			localConn, err := listener.Accept()
 			if err != nil {
+				// happens at exit. is that because we're not handling "cancel-tcpip-forward"?
 				logger.Error("failed-to-accept", err)
 				break
 			}
-
 			go forwardLocalConn(logger, localConn, conn, forwardIP, forwardPort)
 		}
 
