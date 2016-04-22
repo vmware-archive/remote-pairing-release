@@ -27,6 +27,12 @@ type tunnelServer struct {
 	sessionTokens map[string]string
 }
 
+type forwardedTCPIP struct {
+	bindAddr  string
+	process   ifrit.Process
+	boundPort uint32
+}
+
 func (s *tunnelServer) Serve(listener net.Listener) {
 	for {
 		c, err := listener.Accept()
@@ -50,17 +56,10 @@ func (s *tunnelServer) Serve(listener net.Listener) {
 	}
 }
 
-type forwardedTCPIP struct {
-	bindAddr  string
-	process   ifrit.Process
-	boundPort uint32
-}
-
 func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
 	defer conn.Close()
-
 	errorChan := make(chan string, 1)
-	// TODO: enforce localhost/loopback forwarding (no external IPs/host)
+
 	go s.handleForwardRequests(conn, reqs, errorChan)
 
 	for newChannel := range chans {
@@ -70,7 +69,7 @@ func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, cha
 
 		switch newChannel.ChannelType() {
 		case "direct-tcpip":
-			s.handleDirectChannel(newChannel)
+			s.handleDirectChannel(newChannel, errorChan)
 		case "session":
 			s.handleSessionChannel(newChannel, conn.SessionID(), errorChan)
 		default:
@@ -84,9 +83,86 @@ func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, cha
 	}
 }
 
-func (s *tunnelServer) handleDirectChannel(newChannel ssh.NewChannel) {
+func (s *tunnelServer) handleSessionChannel(
+	newChannel ssh.NewChannel,
+	sessionID []byte,
+	errorChan chan string,
+) {
+	channel, requests, err := newChannel.Accept()
+	if err != nil {
+		s.logger.Error("failed-to-accept-channel", err)
+		return
+	}
+	go func() {
+		for {
+			errorMsg := <-errorChan
+			channel.Write([]byte(fmt.Sprintf("\n\r%s\n\r", errorMsg)))
+			channel.Close()
+		}
+	}()
+
+	token, found := s.sessionTokens[string(sessionID)]
+
+	channel.Write([]byte("SSH Tunnel Started\n\r"))
+	if found {
+		channel.Write([]byte(fmt.Sprintf("Token: %s\n\r", token)))
+	}
+
+	// HandleSessionRequests
+	go func() {
+		for req := range requests {
+			ok := true
+			switch req.Type {
+			case "exec":
+				ok = false
+			case "shell":
+				ok = true
+			}
+
+			req.Reply(ok, nil)
+		}
+	}()
+
+	// HandleTerminalReading
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		channel.Write([]byte("\n\rType 'exit' to end the session.\n\r"))
+		term := terminal.NewTerminal(channel, "> ")
+		defer channel.Close()
+
+		for {
+			line, err := term.ReadLine()
+			if err != nil {
+				break
+			}
+
+			if strings.Contains(string(line), "exit") {
+				channel.Close()
+			}
+		}
+	}()
+}
+
+func (s *tunnelServer) handleDirectChannel(
+	newChannel ssh.NewChannel,
+	errorChan chan string,
+) {
+	logger := s.logger.Session("direct-tcpip")
+
 	req := directForwardRequest{}
 	ssh.Unmarshal(newChannel.ExtraData(), &req)
+
+	// NOTE: unfortunately, we don't see this message until traffic is sent.
+	if req.ForwardIP != "localhost" && req.ForwardIP != "127.0.0.1" {
+		errorMsg := "Only localhost forwarding is allowed"
+		logger.Error("invalid-forward-address", errors.New(errorMsg))
+		errorChan <- errorMsg
+		return
+	}
+
+	logger.Info("received-request", lager.Data{
+		"request": req,
+	})
 
 	channel, reqs, err := newChannel.Accept()
 	if err != nil {
@@ -138,66 +214,6 @@ func (s *tunnelServer) handleDirectChannel(newChannel ssh.NewChannel) {
 		wg.Wait()
 
 	}(channel)
-}
-
-func (s *tunnelServer) handleSessionChannel(
-	newChannel ssh.NewChannel,
-	sessionID []byte,
-	errorChan chan string,
-) {
-	channel, requests, err := newChannel.Accept()
-	if err != nil {
-		s.logger.Error("failed-to-accept-channel", err)
-		return
-	}
-	go func() {
-		for {
-			errorMsg := <-errorChan
-			channel.Write([]byte(errorMsg))
-			channel.Close()
-		}
-	}()
-
-	token, found := s.sessionTokens[string(sessionID)]
-
-	channel.Write([]byte("SSH Tunnel Started\n\r"))
-	if found {
-		channel.Write([]byte(fmt.Sprintf("Token: %s\n\r", token)))
-	}
-
-	// HandleSessionRequests
-	go func() {
-		for req := range requests {
-			ok := true
-			switch req.Type {
-			case "exec":
-				ok = false
-			case "shell":
-				ok = true
-			}
-
-			req.Reply(ok, nil)
-		}
-	}()
-
-	// HandleTerminalReading
-	go func() {
-		time.Sleep(40 * time.Millisecond)
-		channel.Write([]byte("\n\rType 'exit' to end the session.\n\r"))
-		term := terminal.NewTerminal(channel, "> ")
-		defer channel.Close()
-
-		for {
-			line, err := term.ReadLine()
-			if err != nil {
-				break
-			}
-
-			if strings.Contains(string(line), "exit") {
-				channel.Close()
-			}
-		}
-	}()
 }
 
 func (s *tunnelServer) handleForwardRequests(
