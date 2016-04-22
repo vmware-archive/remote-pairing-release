@@ -1,25 +1,14 @@
 package main
 
-import (
-	"crypto/rand"
-	"encoding/base64"
-)
+import "crypto/rand"
 
-// TODO:
-// - use math.Rand
-// - be sure the token is alphanumeric, 16 characters
-func GenerateToken() (string, error) {
-	b, err := generateRandomBytes(32)
-	return base64.URLEncoding.EncodeToString(b), err
-}
+func GenerateToken() string {
+	dictionary := "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-func generateRandomBytes(n int) ([]byte, error) {
-	b := make([]byte, n)
-	_, err := rand.Read(b)
-	// Note that err == nil only if we read len(b) bytes.
-	if err != nil {
-		return nil, err
+	var bytes = make([]byte, 16)
+	rand.Read(bytes)
+	for k, v := range bytes {
+		bytes[k] = dictionary[v%byte(len(dictionary))]
 	}
-
-	return b, nil
+	return string(bytes)
 }
