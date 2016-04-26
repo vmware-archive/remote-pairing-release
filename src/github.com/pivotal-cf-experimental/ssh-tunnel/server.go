@@ -19,7 +19,6 @@ import (
 type tunnelServer struct {
 	config         *ssh.ServerConfig
 	logger         lager.Logger
-	tunnelHost     string
 	tunnelSessions map[string]*tunnelSession
 	sessionTokens  map[string]string
 	sync.Mutex
@@ -117,6 +116,8 @@ func (s *tunnelServer) handleSessionChannel(
 
 	if host {
 		channel.Write([]byte(fmt.Sprintf("Token: %s\n\r", token)))
+		channel.Write([]byte(fmt.Sprintf("LocalAddr: %s\n\r", conn.LocalAddr())))
+		channel.Write([]byte(fmt.Sprintf("RemoteAddr: %s\n\r", conn.RemoteAddr())))
 		tunnel, found := s.tunnelSessions[token]
 
 		if !found {

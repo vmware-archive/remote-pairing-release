@@ -17,7 +17,6 @@ import (
 type Command struct {
 	BindIP   IPFlag `long:"bind-ip"         default:"0.0.0.0" description:"IP address on which to listen for SSH."`
 	BindPort uint16 `long:"bind-port"       default:"2222"    description:"Port on which to listen for SSH."`
-	PeerIP   string `long:"peer-ip"         required:"true"   description:"IP address for this tunnel host."`
 
 	AuthorizedKeysPath FileFlag `long:"authorized-keys" required:"true"   description:"Path to file containing keys to authorize, in SSH authorized_keys format."`
 	ServerKeyPath      FileFlag `long:"server-key"      required:"true"   description:"Path to the private key to use for the SSH tunnel."`
@@ -55,7 +54,6 @@ func (cmd *Command) Runner(args []string) (ifrit.Runner, error) {
 	server := &tunnelServer{
 		logger:        cmd.logger,
 		config:        config,
-		tunnelHost:    cmd.PeerIP,
 		sessionTokens: sessionTokens,
 	}
 
