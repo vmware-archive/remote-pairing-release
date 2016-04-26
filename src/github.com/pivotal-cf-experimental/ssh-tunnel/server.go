@@ -41,8 +41,11 @@ type tunnelSession struct {
 }
 
 func (s *tunnelServer) Serve(listener net.Listener) {
+	s.tunnelSessions = map[string]*tunnelSession{}
+
 	for {
 		c, err := listener.Accept()
+
 		if err != nil {
 			if !strings.Contains(err.Error(), "Use of closed network connection") {
 				s.logger.Error("failed-to-accept", err)
@@ -52,7 +55,6 @@ func (s *tunnelServer) Serve(listener net.Listener) {
 		}
 
 		logger := s.logger.Session("connection")
-		s.tunnelSessions = map[string]*tunnelSession{}
 
 		conn, chans, reqs, err := ssh.NewServerConn(c, s.config)
 		if err != nil {
@@ -109,8 +111,6 @@ func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, cha
 			continue
 		}
 	}
-
-	logger.Info("FINISHED CONNECTION HANDLING...............")
 }
 
 func (s *tunnelServer) handleSessionChannel(
@@ -192,6 +192,9 @@ func (s *tunnelServer) handleSessionChannel(
 			}
 
 			if strings.Contains(string(line), "exit") {
+				tunnel := s.tunnelSessions[token]
+				s.logger.Info(fmt.Sprintf("exit... found tunnel: %#v", tunnel))
+
 				channel.Close()
 			}
 		}

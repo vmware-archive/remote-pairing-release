@@ -27,9 +27,7 @@ func (runner tunnelRunner) Run(signals <-chan os.Signal, ready chan<- struct{}) 
 
 	go func() {
 		defer close(exited)
-		// runner.server.Serve(listener)
-		s := &(runner.server)
-		(*s).Serve(listener)
+		runner.server.Serve(listener)
 	}()
 
 	for {
