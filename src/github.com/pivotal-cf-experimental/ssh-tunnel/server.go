@@ -1,9 +1,5 @@
 package main
 
-// NOTE:
-// - Do we want to keep a "heartbeat" concept? Could allow the tunnel to
-//   close after a period of inactivity.
-
 import (
 	"errors"
 	"fmt"
@@ -115,22 +111,6 @@ func (s *tunnelServer) handleSessionChannel(
 
 	channel.Write([]byte("SSH Tunnel Started\n\r"))
 
-	// s.Lock()
-	// // token, found := s.sessionTokens[string(sessionID)]
-	//
-	// if token != "" { // TODO: ...and what if it is empty?
-	// 	channel.Write([]byte(fmt.Sprintf("Token: %s\n\r", token)))
-	// 	tunnel, found := s.tunnelSessions[token]
-	//
-	// 	if !found {
-	// 		tunnel = &tunnelSession{}
-	// 	}
-	//
-	// 	tunnel.serverChannel = &channel
-	// 	s.tunnelSessions[token] = tunnel
-	// }
-	//
-	// s.Unlock()
 	s.Lock()
 
 	token, host := s.sessionTokens[string(sessionID)]
@@ -251,7 +231,6 @@ func (s *tunnelServer) handleDirectChannel(
 	}()
 
 	go func(ch ssh.Channel) {
-		// TODO: reject if not localhost
 		addr := fmt.Sprintf("%s:%d", req.ForwardIP, req.ForwardPort)
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
