@@ -26,6 +26,7 @@ type tunnelServer struct {
 	tunnelHost     string
 	tunnelSessions map[string]*tunnelSession
 	sessionTokens  map[string]string
+	sync.Mutex
 }
 
 type forwardedTCPIP struct {
@@ -74,34 +75,13 @@ func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, cha
 	go s.handleForwardRequests(conn, reqs, sessionID, errorChan)
 
 	for newChannel := range chans {
-		logger.Info("received-channel", lager.Data{
-			"type": newChannel.ChannelType(),
-		})
-
 		switch newChannel.ChannelType() {
 		case "direct-tcpip":
-			token := conn.User()
-			tunnels := s.tunnelSessions
-			tunnel, found := tunnels[token]
-
-			if !found {
-				tunnel = &tunnelSession{}
-			}
-
-			s.logger.Info(fmt.Sprintf("2 tunnelSessions: %#v", s.tunnelSessions))
-			s.logger.Info(fmt.Sprintf("D found tunnel: %#v", tunnel))
-			// for key, value := range s.tunnelSessions {
-			// 	s.logger.Info(fmt.Sprintf("E found token: %s and tunnel: %#v", key, value))
-			// }
-			logger.Info("direct-tcpip-connection", lager.Data{
-				"token":  token,
-				"tunnel": tunnel,
-			})
-			// logger.Info(fmt.Sprintf("all-tunnels %#v", s.tunnelSessions))
+			logger.Info("direct-tcpip-connection")
 			s.handleDirectChannel(newChannel, errorChan)
 		case "session":
 			logger.Info("session-connection")
-			s.handleSessionChannel(newChannel, sessionID, errorChan)
+			s.handleSessionChannel(conn, newChannel, sessionID, errorChan)
 		default:
 			logger.Info("rejecting-channel", lager.Data{
 				"type": newChannel.ChannelType(),
@@ -114,6 +94,7 @@ func (s *tunnelServer) handleConn(logger lager.Logger, conn *ssh.ServerConn, cha
 }
 
 func (s *tunnelServer) handleSessionChannel(
+	conn *ssh.ServerConn,
 	newChannel ssh.NewChannel,
 	sessionID []byte,
 	errorChan chan string,
@@ -132,36 +113,51 @@ func (s *tunnelServer) handleSessionChannel(
 		}
 	}()
 
-	token, found := s.sessionTokens[string(sessionID)]
-
 	channel.Write([]byte("SSH Tunnel Started\n\r"))
-	if found {
+
+	// s.Lock()
+	// // token, found := s.sessionTokens[string(sessionID)]
+	//
+	// if token != "" { // TODO: ...and what if it is empty?
+	// 	channel.Write([]byte(fmt.Sprintf("Token: %s\n\r", token)))
+	// 	tunnel, found := s.tunnelSessions[token]
+	//
+	// 	if !found {
+	// 		tunnel = &tunnelSession{}
+	// 	}
+	//
+	// 	tunnel.serverChannel = &channel
+	// 	s.tunnelSessions[token] = tunnel
+	// }
+	//
+	// s.Unlock()
+	s.Lock()
+
+	token, host := s.sessionTokens[string(sessionID)]
+
+	if host {
 		channel.Write([]byte(fmt.Sprintf("Token: %s\n\r", token)))
-		tunnels := s.tunnelSessions
-		tunnel, found := tunnels[token]
+		tunnel, found := s.tunnelSessions[token]
 
 		if !found {
 			tunnel = &tunnelSession{}
 		}
 
-		s.logger.Info(fmt.Sprintf("1 tunnelSessions: %#v", s.tunnelSessions))
-		s.logger.Info(fmt.Sprintf("A found tunnel: %#v", tunnel))
 		tunnel.serverChannel = &channel
-		tunnels[token] = tunnel
-		// if !ok {
-		// 	s.logger.Info(fmt.Sprintf("adding tunnelSession for %s", token))
-		// 	s.tunnelSessions[token] = tunnel
-		// } else {
-		// 	s.logger.Info(fmt.Sprintf("found tunnel: %#v", tunnel))
-		// }
+		s.tunnelSessions[token] = tunnel
+	} else {
+		token = conn.User()
+		tunnel, found := s.tunnelSessions[token]
 
-		// s.logger.Info("tunnelSession", lager.Data{
-		// 	"tunnel": channel,
-		// })
-		s.logger.Info(fmt.Sprintf("B found tunnel: %#v", tunnel))
+		if !found {
+			tunnel = &tunnelSession{}
+		}
+
+		tunnel.remoteChannel = &channel
+		s.tunnelSessions[token] = tunnel
 	}
 
-	s.logger.Info(fmt.Sprintf("all-tunnels %#v", s.tunnelSessions))
+	s.Unlock()
 
 	// HandleSessionRequests
 	go func() {
@@ -192,8 +188,26 @@ func (s *tunnelServer) handleSessionChannel(
 			}
 
 			if strings.Contains(string(line), "exit") {
-				tunnel := s.tunnelSessions[token]
-				s.logger.Info(fmt.Sprintf("exit... found tunnel: %#v", tunnel))
+				tunnel, found := s.tunnelSessions[token]
+				if found {
+					listener := tunnel.boundListener
+					if listener != nil {
+						(*listener).Close()
+					}
+
+					remoteSession := tunnel.remoteChannel
+					if remoteSession != nil {
+						(*remoteSession).Close()
+					}
+
+					serverSession := tunnel.serverChannel
+					if serverSession != nil {
+						(*serverSession).Close()
+					}
+
+					delete(s.tunnelSessions, token)
+					delete(s.sessionTokens, string(sessionID))
+				}
 
 				channel.Close()
 			}
@@ -218,9 +232,7 @@ func (s *tunnelServer) handleDirectChannel(
 		return
 	}
 
-	logger.Info("received-request", lager.Data{
-		"request": req,
-	})
+	logger.Info("received-request")
 
 	channel, reqs, err := newChannel.Accept()
 	if err != nil {
@@ -285,7 +297,7 @@ func (s *tunnelServer) handleForwardRequests(
 		switch r.Type {
 		case "tcpip-forward":
 			logger := s.logger.Session("tcpip-forward")
-			logger.Info("forward-connection")
+			logger.Info("received-request")
 
 			token, found := s.sessionTokens[string(sessionID)]
 			if !found {
@@ -312,8 +324,6 @@ func (s *tunnelServer) handleForwardRequests(
 				return
 			}
 
-			logger.Info("forward-details-request", lager.Data{"request": req})
-
 			listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", req.BindIP, req.BindPort))
 			if err != nil {
 				logger.Error("failed-to-listen", err)
@@ -321,6 +331,7 @@ func (s *tunnelServer) handleForwardRequests(
 				continue
 			}
 
+			s.Lock()
 			tunnels := s.tunnelSessions
 			tunnel, found := tunnels[token]
 
@@ -330,11 +341,7 @@ func (s *tunnelServer) handleForwardRequests(
 
 			tunnel.boundListener = &listener
 			s.tunnelSessions[token] = tunnel
-
-			logger.Info(fmt.Sprintf("C found tunnel: %#v", tunnel))
-			logger.Info("local-listener", lager.Data{
-				"Addr": listener.Addr().String(),
-			})
+			s.Unlock()
 
 			defer listener.Close()
 
@@ -367,12 +374,6 @@ func (s *tunnelServer) handleForwardRequests(
 			}
 
 			_ = s.forwardTCPIP(logger, conn, listener, req.BindIP, forPort)
-
-			// forwardedTCPIPs <- forwardedTCPIP{
-			// 	bindAddr:  fmt.Sprintf("%s:%d", req.BindIP, req.BindPort),
-			// 	boundPort: res.BoundPort,
-			// 	process:   process,
-			// }
 
 			r.Reply(true, ssh.Marshal(res))
 		default:
@@ -425,12 +426,6 @@ func forwardLocalConn(logger lager.Logger, localConn net.Conn, conn *ssh.ServerC
 	req.ForwardPort = forwardPort
 
 	host, port, err := net.SplitHostPort(localConn.RemoteAddr().String())
-	logger.Info("debug", lager.Data{
-		"req-forward-ip":   req.ForwardIP,
-		"req-forward-port": req.ForwardPort,
-		"local-conn-host":  host,
-		"local-conn-port":  port,
-	})
 
 	if err != nil {
 		logger.Error("failed-to-split-host-port", err)

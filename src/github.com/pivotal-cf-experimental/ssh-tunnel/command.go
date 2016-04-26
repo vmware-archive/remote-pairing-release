@@ -21,8 +21,7 @@ type Command struct {
 
 	AuthorizedKeysPath FileFlag `long:"authorized-keys" required:"true"   description:"Path to file containing keys to authorize, in SSH authorized_keys format."`
 	ServerKeyPath      FileFlag `long:"server-key"      required:"true"   description:"Path to the private key to use for the SSH tunnel."`
-	// SessionKeyPath FileFlag `long:"session-key"     required:"true"   description:"Path to private key to use when signing tokens for registration."`
-	logger lager.Logger
+	logger             lager.Logger
 }
 
 func (cmd *Command) Execute(args []string) error {
@@ -42,11 +41,6 @@ func (cmd *Command) Runner(args []string) (ifrit.Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Failed to load authorized keys: %s", err)
 	}
-
-	// sessionKey, err := cmd.loadSessionKey()
-	// if err != nil {
-	// 	return nil, fmt.Errorf("Failed to load session signing key: %s", err)
-	// }
 
 	// sessionId -> authorizedToken
 	sessionTokens := make(map[string]string)
@@ -105,7 +99,6 @@ func (cmd *Command) configureServer(authorizedKeys []ssh.PublicKey, sessionToken
 			matched := false
 
 			for _, authorizedToken := range sessionTokens {
-				cmd.logger.Info(fmt.Sprintf("Checking token: %s", authorizedToken))
 				if authorizedToken == token {
 					matched = true
 					break
@@ -156,17 +149,3 @@ func (cmd *Command) loadAuthorizedKeys() ([]ssh.PublicKey, error) {
 
 	return authorizedKeys, nil
 }
-
-// func (cmd *Command) loadSessionKey() (*rsa.PrivateKey, error) {
-// 	rsaKeyBlob, err := ioutil.ReadFile(string(cmd.SessionKeyPath))
-// 	if err != nil {
-// 		return nil, fmt.Errorf("Failed to read session signing key file: %s", err)
-// 	}
-//
-// 	sessionKey, err := jwt.ParseRSAPrivateKeyFromPEM(rsaKeyBlob)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("Failed to parse session signing key as RSA: %s", err)
-// 	}
-//
-// 	return sessionKey, nil
-// }
