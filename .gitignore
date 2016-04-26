@@ -13,4 +13,7 @@ config/dev.yml
 config/private.yml
 dev_releases
 releases/*.tgz
+bin
+out
+pkg
 tmp
