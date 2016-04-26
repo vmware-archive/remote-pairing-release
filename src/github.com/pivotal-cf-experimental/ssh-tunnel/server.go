@@ -31,9 +31,9 @@ type forwardedTCPIP struct {
 }
 
 type tunnelSession struct {
-	serverChannel *ssh.Channel
-	remoteChannel *ssh.Channel
-	boundListener *net.Listener
+	serverChannel ssh.Channel
+	remoteChannel ssh.Channel
+	boundListener net.Listener
 }
 
 func (s *tunnelServer) Serve(listener net.Listener) {
@@ -112,19 +112,16 @@ func (s *tunnelServer) handleSessionChannel(
 
 	s.Lock()
 
-	token, host := s.sessionTokens[string(sessionID)]
+	token, hostFound := s.sessionTokens[string(sessionID)]
 
-	if host {
-		channel.Write([]byte(fmt.Sprintf("Token: %s\n\r", token)))
-		channel.Write([]byte(fmt.Sprintf("LocalAddr: %s\n\r", conn.LocalAddr())))
-		channel.Write([]byte(fmt.Sprintf("RemoteAddr: %s\n\r", conn.RemoteAddr())))
+	if hostFound {
 		tunnel, found := s.tunnelSessions[token]
 
 		if !found {
 			tunnel = &tunnelSession{}
 		}
 
-		tunnel.serverChannel = &channel
+		tunnel.serverChannel = channel
 		s.tunnelSessions[token] = tunnel
 	} else {
 		token = conn.User()
@@ -134,10 +131,15 @@ func (s *tunnelServer) handleSessionChannel(
 			tunnel = &tunnelSession{}
 		}
 
-		tunnel.remoteChannel = &channel
+		tunnel.remoteChannel = channel
 		s.tunnelSessions[token] = tunnel
 	}
 
+	sshdHost, sshdPort, err := net.SplitHostPort(conn.LocalAddr().String())
+	if err != nil {
+		s.logger.Error("failed-to-split-local-address", err)
+		return
+	}
 	s.Unlock()
 
 	// HandleSessionRequests
@@ -158,6 +160,19 @@ func (s *tunnelServer) handleSessionChannel(
 	// HandleTerminalReading
 	go func() {
 		time.Sleep(40 * time.Millisecond)
+		tunnel, found := s.tunnelSessions[token]
+		if found && conn.User() == "server" {
+			listener := tunnel.boundListener
+			if listener != nil {
+				_, allocatedPort, err := net.SplitHostPort(listener.Addr().String())
+				if err != nil {
+					s.logger.Error("failed-to-split-listener-address", err)
+					return
+				}
+				channel.Write([]byte(fmt.Sprintf("Client command:\n\rssh -p %s %s@%s -L 6000:localhost:%s\n\r", sshdPort, token, sshdHost, allocatedPort)))
+			}
+		}
+
 		channel.Write([]byte("\n\rType 'exit' to end the session.\n\r"))
 		term := terminal.NewTerminal(channel, "> ")
 		defer channel.Close()
@@ -173,21 +188,30 @@ func (s *tunnelServer) handleSessionChannel(
 				if found {
 					listener := tunnel.boundListener
 					if listener != nil {
-						(*listener).Close()
+						listener.Close()
 					}
 
 					remoteSession := tunnel.remoteChannel
 					if remoteSession != nil {
-						(*remoteSession).Close()
+						remoteSession.Close()
 					}
 
 					serverSession := tunnel.serverChannel
 					if serverSession != nil {
-						(*serverSession).Close()
+						serverSession.Close()
 					}
 
 					delete(s.tunnelSessions, token)
-					delete(s.sessionTokens, string(sessionID))
+
+					var tokenKeyToDelete string
+					for key, val := range s.sessionTokens {
+						if val == token {
+							tokenKeyToDelete = key
+							break
+						}
+					}
+
+					delete(s.sessionTokens, tokenKeyToDelete)
 				}
 
 				channel.Close()
@@ -311,6 +335,8 @@ func (s *tunnelServer) handleForwardRequests(
 				continue
 			}
 
+			logger.Info(fmt.Sprintf("Port listening to: %s", listener.Addr().String()))
+
 			s.Lock()
 			tunnels := s.tunnelSessions
 			tunnel, found := tunnels[token]
@@ -319,7 +345,7 @@ func (s *tunnelServer) handleForwardRequests(
 				tunnel = &tunnelSession{}
 			}
 
-			tunnel.boundListener = &listener
+			tunnel.boundListener = listener
 			s.tunnelSessions[token] = tunnel
 			s.Unlock()
 
