@@ -1,0 +1,22 @@
+---
+packages:
+- name: golang
+  version: bd2951ea7a11fb2d84adf4da3e84ac86da9676f0
+  fingerprint: bd2951ea7a11fb2d84adf4da3e84ac86da9676f0
+  sha1: a8c4192a3886f9814900a7ff9784a2b048970a21
+  dependencies: []
+- name: ssh_tunnel
+  version: 75499dc63d864fa4c2735210dc889c61421c0502
+  fingerprint: 75499dc63d864fa4c2735210dc889c61421c0502
+  sha1: 593e58f449b0694f07ae92341d3cfb88233b0512
+  dependencies:
+  - golang
+jobs:
+- name: ssh_tunnel
+  version: 2833ca2739374cd1e68dde6b939dffa29d673ebc
+  fingerprint: 2833ca2739374cd1e68dde6b939dffa29d673ebc
+  sha1: 042629c42724b18b3b1f2d6300b647597cf704fe
+commit_hash: 11858bbe
+uncommitted_changes: true
+name: remote-pairing
+version: '1'
