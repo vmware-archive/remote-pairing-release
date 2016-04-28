@@ -1,0 +1,63 @@
+---
+name: ssh-tunnel
+director_uuid: <INSERT DIRECTOR UUID HERE>
+
+releases:
+  - name: remote-pairing
+    version: latest
+
+compilation:
+  workers: 1
+  network: public
+  reuse_compilation_vms: true
+  cloud_properties:
+    machine_type: n1-standard-8
+    root_disk_size_gb: 100
+    root_disk_type: pd-ssd
+    preemptible: true
+
+update:
+  canaries: 0
+  canary_watch_time: 1000-60000
+  update_watch_time: 1000-60000
+  max_in_flight: 32
+  serial: false
+
+networks:
+  - name: public
+    type: dynamic
+    cloud_properties:
+      network_name: <INSERT NETWORK NAME HERE>
+      tags:
+        - <INSERT INTERNAL NETWORK TAG HERE>
+        - <INSERT BOSH NETWORK TAG HERE>
+  - name: static
+    type: vip
+
+resource_pools:
+  - name: default
+    network: public
+    stemcell:
+      name: bosh-google-kvm-ubuntu-trusty-go_agent
+      version: latest
+    cloud_properties:
+      machine_type: n1-standard-4
+      root_disk_size_gb: 20
+      root_disk_type: pd-standard
+
+jobs:
+  - name: ssh_tunnel
+    template: ssh_tunnel
+    instances: 1
+    resource_pool: default
+    networks:
+      - name: public
+        default: [dns, gateway]
+      - name: static
+        static_ips:
+          - <INSERT STATIC IP HERE>
+    properties:
+      sshd:
+        server_key: <INSERT SERVER PRIVATE KEY HERE>
+        authorized_keys: <INSERT AUTHORIZED SSH PUBLIC KEYS HERE>
+        external_ip: <INSERT EXTERNAL IP FOR CLIENT COMMAND DISPLAY HERE;SHOULD BE SAME AS STATIC IP>
