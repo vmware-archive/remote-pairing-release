@@ -1,0 +1,22 @@
+set -e # exit immediately if a simple command exits with a non-zero status
+set -u # report the usage of uninitialized variables
+
+# Set package dependencies directory
+PACKAGES_DIR=${BOSH_PACKAGES_DIR:-/var/vcap/packages}
+
+# Set Golang dependency
+export GOROOT=$(cd "${PACKAGES_DIR}/golang" && pwd -P)
+export PATH=${GOROOT}/bin:${PATH}
+
+# Create compile workspace
+mkdir -p ${BOSH_COMPILE_TARGET}/go/src/github.com/pivotal-cf-experimental
+mv ${BOSH_COMPILE_TARGET}/github.com/pivotal-cf-experimental/ssh-tunnel ${BOSH_COMPILE_TARGET}/go/src/github.com/pivotal-cf-experimental/
+export GOPATH=${BOSH_COMPILE_TARGET}/go
+
+# Build it
+cd $GOPATH
+go build github.com/pivotal-cf-experimental/ssh-tunnel
+
+# Copy to install target
+mkdir -p ${BOSH_INSTALL_TARGET}/bin
+cp ssh-tunnel ${BOSH_INSTALL_TARGET}/bin/

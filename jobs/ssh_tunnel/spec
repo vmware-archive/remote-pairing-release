@@ -1,0 +1,21 @@
+---
+name: ssh_tunnel
+templates:
+  ctl.erb: bin/ctl
+  server_key.erb: keys/server_key
+  authorized_keys.erb: keys/authorized_keys
+
+packages:
+  - ssh_tunnel
+
+properties:
+  sshd.host:
+    description: IP/Hostname the SSH server binds to
+    default: 0.0.0.0
+  sshd.port:
+    description: Port the SSH server binds to
+    default: 2222
+  sshd.server_key:
+    description: Server key content
+  sshd.authorized_keys:
+    description: Path to the authorized_keys file

@@ -1,0 +1,9 @@
+---
+name: ssh_tunnel
+
+dependencies:
+- golang
+
+files:
+- github.com/pivotal-cf-experimental/ssh-tunnel/*
+- github.com/pivotal-cf-experimental/ssh-tunnel/vendor/**/*

@@ -1,0 +1,37 @@
+#!/bin/bash
+
+RUN_DIR=/var/vcap/sys/run/ssh_tunnel
+LOG_DIR=/var/vcap/sys/log/ssh_tunnel
+PIDFILE=${RUN_DIR}/pid
+
+case $1 in
+
+  start)
+    mkdir -p $RUN_DIR $LOG_DIR
+    chown -R vcap:vcap $RUN_DIR $LOG_DIR
+
+    echo $$ > $PIDFILE
+
+    export PATH=/var/vcap/packages/ssh_tunnel/bin:$PATH
+
+    exec \
+      ssh-tunnel \
+        --bind-ip <%= properties.sshd.host %> \
+        --bind-port <%= properties.sshd.port %> \
+        --server-key /var/vcap/jobs/ssh_tunnel/keys/server_key \
+        --authorized-keys /var/vcap/jobs/ssh_tunnel/keys/authorized_keys \
+        >>  $LOG_DIR/ssh_tunnel.stdout.log \
+        2>> $LOG_DIR/ssh_tunnel.stderr.log
+
+    ;;
+
+  stop)
+    kill -9 `cat $PIDFILE`
+    rm -f $PIDFILE
+
+    ;;
+
+  *)
+    echo "Usage: ctl {start|stop}" ;;
+
+esac

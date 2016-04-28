@@ -1,0 +1,5 @@
+check process ssh_tunnel
+  with pidfile /var/vcap/sys/run/ssh_tunnel/pid
+  start program "/var/vcap/jobs/ssh_tunnel/bin/ctl start"
+  stop program "/var/vcap/jobs/ssh_tunnel/bin/ctl stop"
+  group vcap
