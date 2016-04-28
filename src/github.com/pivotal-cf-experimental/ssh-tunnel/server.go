@@ -21,6 +21,7 @@ type tunnelServer struct {
 	logger         lager.Logger
 	tunnelSessions map[string]*tunnelSession
 	sessionTokens  map[string]string
+	externalIP     string
 	sync.Mutex
 }
 
@@ -135,12 +136,16 @@ func (s *tunnelServer) handleSessionChannel(
 		s.tunnelSessions[token] = tunnel
 	}
 
-	sshdHost, sshdPort, err := net.SplitHostPort(conn.LocalAddr().String())
+	serverIP, sshdPort, err := net.SplitHostPort(conn.LocalAddr().String())
 	if err != nil {
 		s.logger.Error("failed-to-split-local-address", err)
 		return
 	}
 	s.Unlock()
+
+	if s.externalIP != "0.0.0.0" {
+		serverIP = s.externalIP
+	}
 
 	// HandleSessionRequests
 	go func() {
@@ -169,7 +174,7 @@ func (s *tunnelServer) handleSessionChannel(
 					s.logger.Error("failed-to-split-listener-address", err)
 					return
 				}
-				channel.Write([]byte(fmt.Sprintf("Client command:\n\rssh -p %s %s@%s -L 6000:localhost:%s\n\r", sshdPort, token, sshdHost, allocatedPort)))
+				channel.Write([]byte(fmt.Sprintf("Client command:\n\rssh -p %s %s@%s -L 6000:localhost:%s\n\r", sshdPort, token, serverIP, allocatedPort)))
 			}
 		}
 

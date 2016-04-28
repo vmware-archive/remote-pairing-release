@@ -19,3 +19,6 @@ properties:
     description: Server key content
   sshd.authorized_keys:
     description: Path to the authorized_keys file
+  sshd.external_ip:
+    description: The external IP is used in the client command printed
+    default: 0.0.0.0
