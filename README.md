@@ -22,7 +22,8 @@ server.
 
   > **NOTE:**
   > Make sure there is a firewall rule in place allowing a connection to
-  > this port.
+  > this port. Also consider restricting outgoing connections, as the SSH
+  > tunnel does not require outgoing connections.
 
 #### Optional
 
