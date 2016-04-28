@@ -1,0 +1,49 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "Fsff4Yngdyqbq9ulSyTT4LGrxck=",
+			"path": "github.com/jessevdk/go-flags",
+			"revision": "6b9493b3cb60367edd942144879646604089e3f7",
+			"revisionTime": "2016-02-27T09:34:14Z"
+		},
+		{
+			"checksumSHA1": "x8vUU+B8SayhUWxirNbUjq7Hlns=",
+			"path": "github.com/pivotal-golang/lager",
+			"revision": "7639e31ce6622c55c15aa64144b85d5f4873d127",
+			"revisionTime": "2016-03-11T18:00:00Z"
+		},
+		{
+			"checksumSHA1": "1Ie7iJDZkLKJhaeyi1xZu6qhwhQ=",
+			"path": "github.com/tedsuo/ifrit",
+			"revision": "dc9cce059aa32c53806fc6b4382b5d62751df0ce",
+			"revisionTime": "2016-03-15T18:25:17Z"
+		},
+		{
+			"checksumSHA1": "X47RfuGcYMq8Ao05Q2k1RyHsBhw=",
+			"path": "github.com/tedsuo/ifrit/sigmon",
+			"revision": "dc9cce059aa32c53806fc6b4382b5d62751df0ce",
+			"revisionTime": "2016-03-15T18:25:17Z"
+		},
+		{
+			"checksumSHA1": "h+pFYiRHBogczS8/F1NoN3Ata44=",
+			"path": "golang.org/x/crypto/curve25519",
+			"revision": "2f6fccd33b9b1fc23ebb73ad4890698820f7174d",
+			"revisionTime": "2016-04-06T19:39:42Z"
+		},
+		{
+			"checksumSHA1": "kQ78SUtgHCQkeVb8Aiso4tHvJAU=",
+			"path": "golang.org/x/crypto/ssh",
+			"revision": "2f6fccd33b9b1fc23ebb73ad4890698820f7174d",
+			"revisionTime": "2016-04-06T19:39:42Z"
+		},
+		{
+			"checksumSHA1": "N5fb5y92DFIP+wUhi1rSwPp9vyk=",
+			"path": "golang.org/x/crypto/ssh/terminal",
+			"revision": "2f6fccd33b9b1fc23ebb73ad4890698820f7174d",
+			"revisionTime": "2016-04-06T19:39:42Z"
+		}
+	],
+	"rootPath": "github.com/pivotal-cf-experimental/ssh-tunnel"
+}
