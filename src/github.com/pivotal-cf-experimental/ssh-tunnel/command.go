@@ -79,6 +79,25 @@ func (cmd *Command) configureServer(authorizedKeys []ssh.PublicKey, sessionToken
 	}
 
 	config := &ssh.ServerConfig{
+		KeyboardInteractiveCallback: func(conn ssh.ConnMetadata, client ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
+			token := conn.User()
+			matched := false
+
+			for _, authorizedToken := range sessionTokens {
+				if authorizedToken == token {
+					matched = true
+					break
+				}
+			}
+
+			if matched {
+				cmd.logger.Info(fmt.Sprintf("Session accepted for token: %s", token))
+				return nil, nil
+			}
+
+			return nil, errors.New("Bad Token")
+		},
+
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			user := conn.User()
 			if user == "server" {
@@ -94,22 +113,7 @@ func (cmd *Command) configureServer(authorizedKeys []ssh.PublicKey, sessionToken
 				return nil, nil
 			}
 
-			token := user
-			matched := false
-
-			for _, authorizedToken := range sessionTokens {
-				if authorizedToken == token {
-					matched = true
-					break
-				}
-			}
-
-			if matched {
-				cmd.logger.Info(fmt.Sprintf("User logged in: %s", user))
-				return nil, nil
-			}
-
-			return nil, errors.New("Bad Key or Token")
+			return nil, errors.New("Bad Key")
 		},
 	}
 
