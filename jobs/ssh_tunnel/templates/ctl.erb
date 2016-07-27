@@ -20,7 +20,7 @@ case $1 in
         --bind-port <%= properties.sshd.port %> \
         --server-key /var/vcap/jobs/ssh_tunnel/keys/server_key \
         --authorized-keys /var/vcap/jobs/ssh_tunnel/keys/authorized_keys \
-        --external-ip <%= properties.sshd.external_ip %>
+        --external-ip <%= properties.sshd.external_ip %> \
         >>  $LOG_DIR/ssh_tunnel.stdout.log \
         2>> $LOG_DIR/ssh_tunnel.stderr.log
 
