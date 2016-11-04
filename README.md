@@ -64,3 +64,7 @@ $ ssh -p 2222 tokenblabla@1.2.3.4 -L 6000:localhost:54542
 
 Point your VNC client to localhost:6000 (localhost:<LOCAL_VNC_PORT>), and you
 should be connected.
+```sh
+# e.g., on OS X
+open vnc://localhost:6000
+```
